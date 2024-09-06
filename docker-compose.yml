@@ -1,0 +1,98 @@
+version: "3"
+
+services:
+  postgresdb:
+    image: postgres:15.7-bullseye
+    container_name: "postgres_debezium"
+    environment:
+      POSTGRES_DB: "sass"
+      POSTGRES_USER: "admin_pg"
+      POSTGRES_PASSWORD: "admingres"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data/
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - debezium
+  mongodb:
+    image: mongodb/mongodb-community-server:6.0-ubi8
+    container_name: "mongodb_debezium"
+    environment:
+      MONGODB_INITDB_ROOT_USERNAME: "admin_mongo"
+      MONGODB_INITDB_ROOT_PASSWORD: "admingodbs"
+      MONGODB_INITDB_DATABASE: "sass"
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb-data:/data/db/
+      - ./mongodb/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    networks:
+      - debezium
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongo 10.10.10.60:27017/test --quiet
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.2.1
+    hostname: zookeeper
+    networks:
+      - debezium
+    container_name: zookeeper
+    depends_on:
+      - postgresdb
+      - mongodb
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+    image: confluentinc/cp-server:7.2.1
+    hostname: kafka
+    networks:
+      - debezium
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "9997:9997"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_BALANCER_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_JMX_PORT: 9997
+      KAFKA_JMX_HOSTNAME: kafka
+  kafka-ui:
+    container_name: "kafka-ui"
+    image: provectuslabs/kafka-ui:v0.7.2
+    networks:
+      - debezium
+    ports:
+      - 8080:8080
+    depends_on:
+      - kafka0
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_METRICS_PORT: 9997
+      DYNAMIC_CONFIG_ENABLED: "true"
+volumes:
+  postgres-data:
+  mongodb-data:
+networks:
+  debezium:
+    name: Debezium
+    driver: bridge
